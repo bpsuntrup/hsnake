@@ -68,7 +68,7 @@ playGame w rs = do
                                       , position = (20,20)
                                       }
                                 ])
-    gcmap <- gameColorMap
+    gcmap <- getColorID
     --TODO: draw borders
     --TODO: spawn and remove items here too, or maybe in the evolve function
     let loop st = updateWindow w clear >>
@@ -112,6 +112,7 @@ evolve st d = case snakeStatus st of
               Food      -> st { currentSnake = growSnake (color i) d (currentSnake st)
                               , movingDirection = d
                               , items = Set.insert (i { position = (mod (rands st !! 0) 50, mod (rands st !! 1) 50)}) (Set.delete i $ items st)  --whoops. I guess 50 by 50 is as close as I'm going to get since window size is trapped in Update.
+                              -- Actually, screenSize :: Curses (Integer, Integer), so I could use that instead of (50,50), probably pass that around in GameState, although that would be suboptimal, it would be preferable to what I've got now
                               , rands = tail $ tail $ rands st}
               Poison    -> st { currentSnake = popTail newSnake -- advance snake, but pop tail off... 
                               , movingDirection = d 
@@ -167,16 +168,18 @@ data Item = Item { itemType :: ItemType
                  } deriving (Eq, Ord)
 type Boundary = [(Integer, Integer)]
 
-drawSnake :: Map.Map GameColor ColorID -> Snake -> Update ()
+--todo, create a random Item generator, probably make Item an instance of Random.
+
+drawSnake :: (GameColor -> ColorID) -> Snake -> Update ()
 drawSnake _ [] = return ()
 drawSnake gcm (head:rest) = setColor color >>
                       moveCursor y x   >>
                       drawString " "   >>
                       drawSnake gcm rest
                       where (y,x) = coords head
-                            color = gcm Map.! colorId head
+                            color = gcm $ colorId head
 
-drawItems :: Map.Map GameColor ColorID -> [Item] -> Update ()
+drawItems :: (GameColor -> ColorID) -> [Item] -> Update ()
 drawItems _ [] = return ()
 drawItems gcm (i:is) = setColor col >>
                        windowSize >>= \(max_y, max_x) ->
@@ -184,29 +187,29 @@ drawItems gcm (i:is) = setColor col >>
                        drawString itemString >>
                        drawItems gcm is
                        where (y,x) = position i
-                             col = gcm Map.! (color i)
+                             col = gcm $ (color i)
                              itemString = case (itemType i) of
                                                Food      -> "*"
                                                Poison    -> "x"
                                                Booster   -> "^"
                                                Retardant -> "v"
                       
-gameColorMap :: Curses (Map.Map GameColor ColorID)
-gameColorMap = do
+getColorID :: Curses (GameColor -> ColorID)
+getColorID = do
     redID    <- newColorID ColorWhite ColorRed  21
     yellowID <- newColorID ColorBlack ColorYellow 22
     greenID  <- newColorID ColorBlack ColorGreen 23
     blueID   <- newColorID ColorWhite ColorBlue 24
     magentaID <- newColorID ColorWhite ColorMagenta 25
     cyanID <- newColorID ColorBlack ColorCyan 26
-    let myMap = [ (Red, redID),
-                  (Yellow, yellowID),
-                  (Green, greenID),
-                  (Blue, blueID),
-                  (Cyan, cyanID),
-                  (Magenta, magentaID) ]
-    return $ Map.fromList myMap
-
+    let map = \gc -> case gc of
+                        Red     -> redID
+                        Yellow  -> yellowID
+                        Green   -> greenID
+                        Blue    -> blueID
+                        Cyan    -> cyanID
+                        Magenta -> magentaID
+    return map
 
 advanceSnake :: Direction -> Snake -> Snake
 advanceSnake d snake@(head:tail) = case d of

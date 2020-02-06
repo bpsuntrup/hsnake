@@ -29,13 +29,23 @@ main = newStdGen >>= \g -> runCurses $ do
         drawString "(press q to quit)"
         moveCursor 0 0
     render
+    menuLoop w
     playGame w $ randoms g
+
+menuLoop :: Window -> Curses ()
+menuLoop w = do
+    ev <- getEvent w (Nothing)
+    case ev of
+        Nothing  -> menuLoop w
+        Just ev' -> case ev' of 
+                      EventCharacter 'Q' -> render
+                      _                  -> render
 
 playGame :: Window -> [Integer] -> Curses ()
 playGame w rs = do
     screenSizeYX <- screenSize
     let mySnake = [SnakeSegment { coords=(4,10), colorId=Blue}]
-    let myBoundary = [] -- TODO: make this match the window size or something, also create a function to draw the boundary
+    let myBoundary = [] -- TODO: make this match the window size or something, also create a function to draw the boundary... There is already a boundary function in the curses library
     let myItems = (Set.fromList [Item { itemType=Food
                                       , color=Red
                                       , position=(10,10) 
@@ -89,7 +99,7 @@ playGame w rs = do
                           _   -> loop $ evolve st $ movingDirection st
     loop GameState { currentSnake    = mySnake
                    , movingDirection = South
-                   , someInt         = 0
+                   , score           = 0 --TODO: display this somehow
                    , items           = myItems
                    , speed           = 200
                    , gameover        = False
@@ -100,40 +110,28 @@ playGame w rs = do
 
 evolve :: GameState -> Direction -> GameState
 
--- TODO: maybe this is where items should be spawned and removed as well, rather than in the main loop. 
 evolve st d = case snakeStatus st of 
     StatusBoundary   -> st { gameover = True }
     StatusCannibal   -> st { gameover = True }
     StatusEmptySnake -> st { gameover = True }
-    StatusNone       -> st { currentSnake = newSnake 
-                           , movingDirection = d }
+    StatusNone       -> newState
     StatusItem i     -> consumeNow st d i
     where newSnake = advanceSnake d (currentSnake st)
-          --TODO: make this update items with new random positions
           consumeNow st d i = case itemType i of
-              Food      -> st { currentSnake = growSnake (color i) d (currentSnake st)
-                              , movingDirection = d
-                              , items = Set.insert newItem (Set.delete i $ items st)
-                              , rands = newRands }
-              Poison    -> st { currentSnake = popTail newSnake -- advance snake, but pop tail off... 
-                              , movingDirection = d 
-                              , items = Set.insert newItem (Set.delete i $ items st)
-                              , rands = newRands }
-              Booster   -> st { speed = max 1 ((speed st) - 10)
-                              , currentSnake = newSnake
-                              , movingDirection = d 
-                              , items = Set.insert newItem (Set.delete i $ items st)
-                              , rands = newRands }
-              Retardant -> st { speed = (speed st) + 10
-                              , currentSnake = newSnake
-                              , movingDirection = d 
-                              , items = Set.insert newItem (Set.delete i $ items st)
-                              , rands = newRands }
+              Food      -> newState { items = newItems i, currentSnake = growSnake (color i) d (currentSnake st) }
+              Poison    -> newState { items = newItems i, currentSnake = popTail newSnake } -- advance snake, but pop tail off... 
+              Booster   -> newState { items = newItems i, speed = max 1 ((speed st) - 10) }
+              Retardant -> newState { items = newItems i, speed = (speed st) + 10 }
           snyx@(sn_y, sn_x) = coords $ head $ currentSnake st
           boundaryCollisions = filter (snyx==) $ boundary st
           snakeCollisions = filter (snyx==) $ map coords $ tail $ currentSnake st
           itemCollisions = filter (\x -> snyx == position x) $ Set.toList $ items st
-          (newItem, newRands) = (randItem . yxSize) st $ rands st --TODO, eliminate 50,50. Get screen size here somehow
+          (newItem, newRands) = (randItem . yxSize) st $ rands st
+          newState = st { currentSnake    = newSnake
+                        , movingDirection = d
+                        , rands           = newRands
+                        }
+          newItems i = Set.insert newItem (Set.delete i $ items st)
           snakeStatus st =
               if boundaryCollisions == []
               then if snakeCollisions == []
@@ -146,13 +144,13 @@ evolve st d = case snakeStatus st of
 --TODO: add a score, and score effects for each type of event
 data GameState = GameState { currentSnake    :: Snake
                            , movingDirection :: Direction
-                           , someInt         :: Int
                            , items           :: Set.Set Item
                            , speed           :: Integer
                            , gameover        :: Bool
                            , boundary        :: [(Integer, Integer)]
                            , rands           :: [Integer]
                            , yxSize          :: (Integer, Integer)
+                           , score           :: Integer
                            }
 
 type Snake = [SnakeSegment]

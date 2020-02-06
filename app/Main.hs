@@ -33,6 +33,7 @@ main = newStdGen >>= \g -> runCurses $ do
 
 playGame :: Window -> [Integer] -> Curses ()
 playGame w rs = do
+    screenSizeYX <- screenSize
     let mySnake = [SnakeSegment { coords=(4,10), colorId=Blue}]
     let myBoundary = [] -- TODO: make this match the window size or something, also create a function to draw the boundary
     let myItems = (Set.fromList [Item { itemType=Food
@@ -94,6 +95,7 @@ playGame w rs = do
                    , gameover        = False
                    , boundary        = myBoundary
                    , rands           = rs
+                   , yxSize          = screenSizeYX
                    }
 
 evolve :: GameState -> Direction -> GameState
@@ -111,27 +113,27 @@ evolve st d = case snakeStatus st of
           consumeNow st d i = case itemType i of
               Food      -> st { currentSnake = growSnake (color i) d (currentSnake st)
                               , movingDirection = d
-                              , items = Set.insert (i { position = (mod (rands st !! 0) 50, mod (rands st !! 1) 50)}) (Set.delete i $ items st)  --whoops. I guess 50 by 50 is as close as I'm going to get since window size is trapped in Update.
-                              -- Actually, screenSize :: Curses (Integer, Integer), so I could use that instead of (50,50), probably pass that around in GameState, although that would be suboptimal, it would be preferable to what I've got now
-                              , rands = tail $ tail $ rands st}
+                              , items = Set.insert newItem (Set.delete i $ items st)
+                              , rands = newRands }
               Poison    -> st { currentSnake = popTail newSnake -- advance snake, but pop tail off... 
                               , movingDirection = d 
-                              , items = Set.insert (i { position = (mod (rands st !! 0) 50, mod (rands st !! 1) 50)}) (Set.delete i $ items st)  --whoops. I guess 50 by 50 is as close as I'm going to get since window size is trapped in Update.
-                              , rands = tail $ tail $ rands st}
+                              , items = Set.insert newItem (Set.delete i $ items st)
+                              , rands = newRands }
               Booster   -> st { speed = max 1 ((speed st) - 10)
                               , currentSnake = newSnake
                               , movingDirection = d 
-                              , items = Set.insert (i { position = (mod (rands st !! 0) 50, mod (rands st !! 1) 50)}) (Set.delete i $ items st)  --whoops. I guess 50 by 50 is as close as I'm going to get since window size is trapped in Update.
-                              , rands = tail $ tail $ rands st}
+                              , items = Set.insert newItem (Set.delete i $ items st)
+                              , rands = newRands }
               Retardant -> st { speed = (speed st) + 10
                               , currentSnake = newSnake
                               , movingDirection = d 
-                              , items = Set.insert (i { position = (mod (rands st !! 0) 50, mod (rands st !! 1) 50)}) (Set.delete i $ items st)  --whoops. I guess 50 by 50 is as close as I'm going to get since window size is trapped in Update.
-                              , rands = tail $ tail $ rands st}
+                              , items = Set.insert newItem (Set.delete i $ items st)
+                              , rands = newRands }
           snyx@(sn_y, sn_x) = coords $ head $ currentSnake st
           boundaryCollisions = filter (snyx==) $ boundary st
           snakeCollisions = filter (snyx==) $ map coords $ tail $ currentSnake st
           itemCollisions = filter (\x -> snyx == position x) $ Set.toList $ items st
+          (newItem, newRands) = (randItem . yxSize) st $ rands st --TODO, eliminate 50,50. Get screen size here somehow
           snakeStatus st =
               if boundaryCollisions == []
               then if snakeCollisions == []
@@ -150,6 +152,7 @@ data GameState = GameState { currentSnake    :: Snake
                            , gameover        :: Bool
                            , boundary        :: [(Integer, Integer)]
                            , rands           :: [Integer]
+                           , yxSize          :: (Integer, Integer)
                            }
 
 type Snake = [SnakeSegment]
@@ -160,7 +163,7 @@ data SnakeSegment = SnakeSegment { coords  :: (Integer, Integer)
 data Direction = North | East | South | West
 -- TODO: add potions for things like eating boundaries, eating yourself, changing color, clearing an item type, etc.
 data ItemType = Food | Poison | Booster | Retardant deriving (Eq, Ord)
-data GameColor = Red | Orange | Yellow | Green | Cyan | Blue | Violet | Magenta deriving (Eq, Ord)
+data GameColor = Red | Yellow | Green | Cyan | Blue | Magenta deriving (Eq, Ord)
 --TODO: make items have a "shelf life" and expire after a certain amount of time
 data Item = Item { itemType :: ItemType
                  , color    :: GameColor
@@ -169,6 +172,26 @@ data Item = Item { itemType :: ItemType
 type Boundary = [(Integer, Integer)]
 
 --todo, create a random Item generator, probably make Item an instance of Random.
+-- | Takes (height, width) of terminal, infinite list of randoms, and returning a random Item. May someday take
+-- object representing weights for fields of Item
+-- TODO: the randomness should be handled in a monad
+randItem :: (Integer, Integer) -> [Integer] -> (Item, [Integer])
+randItem (y,x) (riit:ric:rx:ry:rs) = 
+    (Item { itemType = randit
+          , color    = randgc
+          , position = (ry `mod` y, rx `mod` x)
+          }
+    , rs)
+    where randit | riit `mod` 100 < 75 = Food
+                 | riit `mod` 100 < 85 = Booster
+                 | riit `mod` 100 < 95 = Retardant
+                 | otherwise           = Poison
+          randgc | ric `mod` 60 < 10 = Red
+                 | ric `mod` 60 < 20 = Yellow
+                 | ric `mod` 60 < 30 = Green
+                 | ric `mod` 60 < 40 = Cyan
+                 | ric `mod` 60 < 50 = Blue
+                 | otherwise         = Magenta
 
 drawSnake :: (GameColor -> ColorID) -> Snake -> Update ()
 drawSnake _ [] = return ()

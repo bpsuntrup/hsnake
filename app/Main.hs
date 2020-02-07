@@ -1,10 +1,12 @@
 module Main where
 
-import Lib
+import Lib --am I going to use Lib?????
 import UI.NCurses
 import qualified Data.Set as Set
 import qualified Data.Map as Map
 import System.Random
+import Lens.Micro
+import Control.Monad.IO.Class
 
 --TODO: check if the terminal is too small. Display error message and exit.
 --TODO: display instructions (use arrow keys. legend for what each item does. Don't eat yourself)
@@ -16,9 +18,10 @@ import System.Random
 --TODO: magic!!!!! GLITTER!!! Fireworks!
 --TODO: make this internet.
 --TODO: add mice that run away from the snake
+--TODO: save games and pause games.... no. You can't pause a game until you've made a checkpoint,,, increased a level or something
 
 main :: IO ()
-main = newStdGen >>= \g -> runCurses $ do
+main = runCurses $ do
     setEcho False
     w <- defaultWindow
     setCursorMode CursorInvisible
@@ -29,8 +32,8 @@ main = newStdGen >>= \g -> runCurses $ do
         drawString "(press q to quit)"
         moveCursor 0 0
     render
-    menuLoop w
-    playGame w $ randoms g
+    menuLoop w -- ideally, I guess this would create an initial state object and pass it to playGame... could even have funcitonality for pausing and saving games
+    playGame w
 
 menuLoop :: Window -> Curses ()
 menuLoop w = do
@@ -38,65 +41,34 @@ menuLoop w = do
     case ev of
         Nothing  -> menuLoop w
         Just ev' -> case ev' of 
-                      EventCharacter 'Q' -> render
-                      _                  -> render
+            EventCharacter 'Q' -> render
+            _                  -> render
 
-playGame :: Window -> [Integer] -> Curses ()
-playGame w rs = do
-    screenSizeYX <- screenSize
+playGame :: Window -> Curses ()
+playGame w = do
+    --TODO: display game over message, maybe returning Curses (ExitScreen) or something
+    screenSizeYX@(maxy, maxx) <- screenSize
     let mySnake = [SnakeSegment { coords=(4,10), colorId=Blue}]
     let myBoundary = [] -- TODO: make this match the window size or something, also create a function to draw the boundary... There is already a boundary function in the curses library
-    let myItems = (Set.fromList [Item { itemType=Food
-                                      , color=Red
-                                      , position=(10,10) 
-                                      }
-                                ,Item { itemType = Food
-                                      , color = Magenta
-                                      , position = (10,20)
-                                      }
-                                ,Item { itemType = Food
-                                      , color = Magenta
-                                      , position = (10,30)
-                                      }
-                                ,Item { itemType = Food
-                                      , color = Cyan
-                                      , position = (10,40)
-                                      }
-                                ,Item { itemType = Food
-                                      , color = Yellow
-                                      , position = (10,50)
-                                      }
-                                ,Item { itemType = Food
-                                      , color = Green
-                                      , position = (10,60)
-                                      }
-                                ,Item { itemType = Poison
-                                      , color = Green
-                                      , position = (20,10)
-                                      }
-                                ,Item { itemType = Booster
-                                      , color = Blue
-                                      , position = (20,20)
-                                      }
-                                ])
+    g <- liftIO getStdGen
+    let (myItems, initRands) = (over _1 Set.fromList) (randItems (maxy * maxx `div` 100) screenSizeYX $ randoms g) -- This number 100 can be increased to decrease the amount of items. I quite like this number though
     gcmap <- getColorID
     --TODO: draw borders
-    --TODO: spawn and remove items here too, or maybe in the evolve function
-    let loop st = updateWindow w clear >>
-                  updateWindow w (drawItems gcmap $ Set.toList $ items st) >>
-                  updateWindow w (drawSnake gcmap $ currentSnake st) >>
-                  render >>
-                  getEvent w (Just $ speed st) >>= \ev ->
-                  case ev of
-                      Nothing  -> loop $ evolve st $ movingDirection st
-                      Just ev' -> case ev' of
-                          EventCharacter 'q' -> render
-                          EventCharacter 'Q' -> render
-                          EventSpecialKey KeyUpArrow    -> loop $ evolve st North
-                          EventSpecialKey KeyLeftArrow  -> loop $ evolve st West
-                          EventSpecialKey KeyDownArrow  -> loop $ evolve st South
-                          EventSpecialKey KeyRightArrow -> loop $ evolve st East
-                          _   -> loop $ evolve st $ movingDirection st
+    let loop st = do updateWindow w clear
+                     updateWindow w (drawItems gcmap $ Set.toList $ items st)
+                     updateWindow w (drawSnake gcmap $ currentSnake st)
+                     render
+                     ev <- getEvent w (Just $ speed st)
+                     case ev of
+                         Nothing  -> loop $ evolve st $ movingDirection st
+                         Just ev' -> case ev' of
+                             EventCharacter 'q' -> render --add exit screen here
+                             EventCharacter 'Q' -> render
+                             EventSpecialKey KeyUpArrow    -> loop $ evolve st North
+                             EventSpecialKey KeyLeftArrow  -> loop $ evolve st West
+                             EventSpecialKey KeyDownArrow  -> loop $ evolve st South
+                             EventSpecialKey KeyRightArrow -> loop $ evolve st East
+                             _   -> loop $ evolve st $ movingDirection st
     loop GameState { currentSnake    = mySnake
                    , movingDirection = South
                    , score           = 0 --TODO: display this somehow
@@ -104,13 +76,13 @@ playGame w rs = do
                    , speed           = 200
                    , gameover        = False
                    , boundary        = myBoundary
-                   , rands           = rs
+                   , rands           = initRands
                    , yxSize          = screenSizeYX
                    }
 
 evolve :: GameState -> Direction -> GameState
 
-evolve st d = case snakeStatus st of 
+evolve st d = case snakeStatus of 
     StatusBoundary   -> st { gameover = True }
     StatusCannibal   -> st { gameover = True }
     StatusEmptySnake -> st { gameover = True }
@@ -132,7 +104,13 @@ evolve st d = case snakeStatus st of
                         , rands           = newRands
                         }
           newItems i = Set.insert newItem (Set.delete i $ items st)
-          snakeStatus st =
+          --TODO: think harder about how to make the following prettier
+          --snakeStatus
+          --      | boundaryCollisions /= [] = StatusBoundary
+          --      | snakeCollisions /= []    = StatusCannibal
+          --      | itemCollisions /= []     = StatusNone
+          --      | otherwise                = StatusItem $ head itemCollisions
+          snakeStatus =
               if boundaryCollisions == []
               then if snakeCollisions == []
                    then if itemCollisions == []
@@ -169,7 +147,6 @@ data Item = Item { itemType :: ItemType
                  } deriving (Eq, Ord)
 type Boundary = [(Integer, Integer)]
 
---todo, create a random Item generator, probably make Item an instance of Random.
 -- | Takes (height, width) of terminal, infinite list of randoms, and returning a random Item. May someday take
 -- object representing weights for fields of Item
 -- TODO: the randomness should be handled in a monad
@@ -181,7 +158,7 @@ randItem (y,x) (riit:ric:rx:ry:rs) =
           }
     , rs)
     where randit | riit `mod` 100 < 75 = Food
-                 | riit `mod` 100 < 85 = Booster
+                 | riit `mod` 100 < 90 = Booster
                  | riit `mod` 100 < 95 = Retardant
                  | otherwise           = Poison
           randgc | ric `mod` 60 < 10 = Red
@@ -190,6 +167,14 @@ randItem (y,x) (riit:ric:rx:ry:rs) =
                  | ric `mod` 60 < 40 = Cyan
                  | ric `mod` 60 < 50 = Blue
                  | otherwise         = Magenta
+
+randItems :: Integer              -- ^ number of items
+          -> (Integer, Integer)   -- ^ screen size
+          -> [Integer]            -- ^ infinite random list
+          -> ([Item], [Integer])
+randItems 0 yx rs = ([], rs)
+randItems n yx rs = let (it, newrands) = randItem yx rs
+                    in  over _1 (it:) (randItems (n-1) yx newrands)
 
 drawSnake :: (GameColor -> ColorID) -> Snake -> Update ()
 drawSnake _ [] = return ()
@@ -259,6 +244,7 @@ growSnake c d s@(head:tail) = (SnakeSegment {coords=newHeadCoords, colorId=c}):s
               South -> (y+1,x)
               West  -> (y,x-1)
 
+--TODO: use init instead
 popTail :: [a] -> [a]
 popTail [] = []
 popTail (x:xs) = case xs of

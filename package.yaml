@@ -25,6 +25,7 @@ dependencies:
 - ncurses
 - containers
 - random >= 1.1 && < 2
+- microlens
 
 library:
   source-dirs: src

@@ -7,6 +7,7 @@ import qualified Data.Map as Map
 import System.Random
 import Lens.Micro
 import Control.Monad.IO.Class
+import Data.Foldable (mapM_)
 
 --TODO: check if the terminal is too small. Display error message and exit.
 --TODO: display instructions (use arrow keys. legend for what each item does. Don't eat yourself)
@@ -44,12 +45,20 @@ menuLoop w = do
             EventCharacter 'Q' -> render
             _                  -> render
 
+--TODO: add color
+generateDefaultBoundary :: (Integer, Integer) -> Set.Set (Integer, Integer)
+generateDefaultBoundary (y, x) = top `Set.union` bottom `Set.union` left `Set.union` right
+    where top    = Set.fromList $ map (\e -> (1,e)) [1..x-1]
+          bottom = Set.fromList $ map (\e -> (y-1,e)) [1..x-1]
+          left   = Set.fromList $ map (\e -> (e,1)) [1..y-1]
+          right  = Set.fromList $ map (\e -> (e,x-1)) [1..y-1]
+
 playGame :: Window -> Curses ()
 playGame w = do
     --TODO: display game over message, maybe returning Curses (ExitScreen) or something
     screenSizeYX@(maxy, maxx) <- screenSize
     let mySnake = [SnakeSegment { coords=(4,10), colorId=Blue}]
-    let myBoundary = [] -- TODO: make this match the window size or something, also create a function to draw the boundary... There is already a boundary function in the curses library
+    let myBoundary = generateDefaultBoundary screenSizeYX
     g <- liftIO getStdGen
     let (myItems, initRands) = (over _1 Set.fromList) (randItems (maxy * maxx `div` 100) screenSizeYX $ randoms g) -- This number 100 can be increased to decrease the amount of items. I quite like this number though
     gcmap <- getColorID
@@ -57,6 +66,7 @@ playGame w = do
     let loop st = do updateWindow w clear
                      updateWindow w (drawItems gcmap $ Set.toList $ items st)
                      updateWindow w (drawSnake gcmap $ currentSnake st)
+                     updateWindow w $ drawBoundary gcmap $ st boundary
                      render
                      ev <- getEvent w (Just $ speed st)
                      case ev of
@@ -95,9 +105,9 @@ evolve st d = case snakeStatus of
               Booster   -> newState { items = newItems i, speed = max 1 ((speed st) - 10) }
               Retardant -> newState { items = newItems i, speed = (speed st) + 10 }
           snyx@(sn_y, sn_x) = coords $ head $ currentSnake st
-          boundaryCollisions = filter (snyx==) $ boundary st
+          boundaryCollisions = filter (snyx==) $ Set.toList $ boundary st -- TODO, use a set filter function here
           snakeCollisions = filter (snyx==) $ map coords $ tail $ currentSnake st
-          itemCollisions = filter (\x -> snyx == position x) $ Set.toList $ items st
+          itemCollisions = filter (\x -> snyx == position x) $ Set.toList $ items st --- and here
           (newItem, newRands) = (randItem . yxSize) st $ rands st
           newState = st { currentSnake    = newSnake
                         , movingDirection = d
@@ -125,7 +135,7 @@ data GameState = GameState { currentSnake    :: Snake
                            , items           :: Set.Set Item
                            , speed           :: Integer
                            , gameover        :: Bool
-                           , boundary        :: [(Integer, Integer)]
+                           , boundary        :: Set.Set (Integer, Integer)
                            , rands           :: [Integer]
                            , yxSize          :: (Integer, Integer)
                            , score           :: Integer
@@ -145,7 +155,9 @@ data Item = Item { itemType :: ItemType
                  , color    :: GameColor
                  , position :: (Integer, Integer)
                  } deriving (Eq, Ord)
-type Boundary = [(Integer, Integer)]
+type GameColorMap = GameColor -> ColorID
+type Boundary = Set.Set (Integer, Integer)
+
 
 -- | Takes (height, width) of terminal, infinite list of randoms, and returning a random Item. May someday take
 -- object representing weights for fields of Item
@@ -176,7 +188,13 @@ randItems 0 yx rs = ([], rs)
 randItems n yx rs = let (it, newrands) = randItem yx rs
                     in  over _1 (it:) (randItems (n-1) yx newrands)
 
-drawSnake :: (GameColor -> ColorID) -> Snake -> Update ()
+--TDOO: this doesn't work
+drawBoundary :: GameColorMap -> Boundary -> Update ()
+drawBoundary gcm b = setColor c >>
+                     mapM_ (\(y,x) -> moveCursor y x >> drawString " ") b
+                     where c = gcm Green -- todo: make this a parameter
+
+drawSnake :: GameColorMap -> Snake -> Update ()
 drawSnake _ [] = return ()
 drawSnake gcm (head:rest) = setColor color >>
                       moveCursor y x   >>

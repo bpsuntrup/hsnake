@@ -45,13 +45,13 @@ menuLoop w = do
             EventCharacter 'Q' -> render
             _                  -> render
 
---TODO: add color
+--TODO: add color to boundary, or maybe color parameter to draw border function. Also figure out where the edgy edge edge is. Also items should not spawn on the border...
 generateDefaultBoundary :: (Integer, Integer) -> Set.Set (Integer, Integer)
 generateDefaultBoundary (y, x) = top `Set.union` bottom `Set.union` left `Set.union` right
-    where top    = Set.fromList $ map (\e -> (1,e)) [1..x-1]
-          bottom = Set.fromList $ map (\e -> (y-1,e)) [1..x-1]
-          left   = Set.fromList $ map (\e -> (e,1)) [1..y-1]
-          right  = Set.fromList $ map (\e -> (e,x-1)) [1..y-1]
+    where top    = Set.fromList $ map (\e -> (0,e)) [0..x-1]
+          bottom = Set.fromList $ map (\e -> (y-1, e)) [0..x-2] -- this has to have (-2) for some reason that I can't fathom
+          left   = Set.fromList $ map (\e -> (e,0)) [0..y-1]
+          right  = Set.fromList $ map (\e -> (e,x-1)) [0..y-2] -- same here. can't draw in bottom right for whatever reason...
 
 playGame :: Window -> Curses ()
 playGame w = do
@@ -60,13 +60,14 @@ playGame w = do
     let mySnake = [SnakeSegment { coords=(4,10), colorId=Blue}]
     let myBoundary = generateDefaultBoundary screenSizeYX
     g <- liftIO getStdGen
+    -- TODO: make this a menu selection... i.e. how many items there should be "one" "sparse" "normal" "dense" "everything is an item"
     let (myItems, initRands) = (over _1 Set.fromList) (randItems (maxy * maxx `div` 100) screenSizeYX $ randoms g) -- This number 100 can be increased to decrease the amount of items. I quite like this number though
     gcmap <- getColorID
     --TODO: draw borders
     let loop st = do updateWindow w clear
+                     updateWindow w $ drawBoundary gcmap $ boundary st
                      updateWindow w (drawItems gcmap $ Set.toList $ items st)
                      updateWindow w (drawSnake gcmap $ currentSnake st)
-                     updateWindow w $ drawBoundary gcmap $ st boundary
                      render
                      ev <- getEvent w (Just $ speed st)
                      case ev of
@@ -162,6 +163,7 @@ type Boundary = Set.Set (Integer, Integer)
 -- | Takes (height, width) of terminal, infinite list of randoms, and returning a random Item. May someday take
 -- object representing weights for fields of Item
 -- TODO: the randomness should be handled in a monad
+-- TODO: don't generate items in the border, or the snake. Needs to know the state of the game. Or maybe just make an infinite list of items somewhere...
 randItem :: (Integer, Integer) -> [Integer] -> (Item, [Integer])
 randItem (y,x) (riit:ric:rx:ry:rs) = 
     (Item { itemType = randit
@@ -188,10 +190,10 @@ randItems 0 yx rs = ([], rs)
 randItems n yx rs = let (it, newrands) = randItem yx rs
                     in  over _1 (it:) (randItems (n-1) yx newrands)
 
---TDOO: this doesn't work
+--TODO in all draw functions... check for bottom right corner... and avoid it.
 drawBoundary :: GameColorMap -> Boundary -> Update ()
 drawBoundary gcm b = setColor c >>
-                     mapM_ (\(y,x) -> moveCursor y x >> drawString " ") b
+                     mapM_ (\(y,x) -> moveCursor y x >> drawString "#") b
                      where c = gcm Green -- todo: make this a parameter
 
 drawSnake :: GameColorMap -> Snake -> Update ()
